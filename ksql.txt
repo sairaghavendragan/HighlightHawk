@@ -1,0 +1,41 @@
+-- Create a stream to monitor the 'match_highlights' topic
+CREATE STREAM match_highlights_stream (
+  TITLE VARCHAR KEY,
+  HIGHLIGHTS VARCHAR
+) WITH (
+  KAFKA_TOPIC='match_highlights',
+  VALUE_FORMAT='AVRO'
+);
+
+-- Create a table to store the latest highlights for each match
+CREATE TABLE latest_highlights AS
+SELECT TITLE, LATEST_BY_OFFSET(HIGHLIGHTS) AS LATEST_HIGHLIGHT
+FROM match_highlights_stream
+GROUP BY TITLE
+EMIT CHANGES;
+
+-- Create a stream to capture changes in the 'latest_highlights' table
+CREATE STREAM highlights_changes_stream
+WITH (KAFKA_TOPIC='latest_highlights', VALUE_FORMAT='AVRO')
+AS
+SELECT TITLE, LATEST_HIGHLIGHT
+FROM latest_highlights
+EMIT CHANGES;
+
+-- Create a stream to format messages for Telegram
+CREATE STREAM telegram_outbox (
+  chat_id VARCHAR,
+  text VARCHAR
+) WITH (
+  KAFKA_TOPIC='telegram_outbox',
+  VALUE_FORMAT='AVRO',
+  KEY_FORMAT='STRING'
+);
+
+
+-- Insert new highlights into the 'telegram_outbox' stream
+INSERT INTO telegram_outbox
+SELECT '<YOUR_TELEGRAM_CHAT_ID>' AS chat_id,
+       'New highlights for match ' || TITLE || ': ' || LATEST_HIGHLIGHT AS text
+FROM highlights_changes_stream
+WHERE LATEST_HIGHLIGHT IS NOT NULL;
